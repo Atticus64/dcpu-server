@@ -1,7 +1,7 @@
 import { join } from "@std/path";
 import { log } from "../lib/logger.ts";
 
-const TOOLS_DIR = join(import.meta.dirname!, "..", "..", "tools", "jwasm");
+const TOOLS_DIR = join(import.meta.dirname!, "..", "tools", "jwasm");
 const JWASM_WIN = join(TOOLS_DIR, "JWasm.exe");
 const JWASM_LOCAL = join(TOOLS_DIR, "jwasm");
 

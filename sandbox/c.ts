@@ -1,7 +1,7 @@
 import { join } from "@std/path";
 import { log } from "../lib/logger.ts";
 
-const TOOLS_DIR = join(import.meta.dirname!, "..", "..", "tools", "tcc", "tcc");
+const TOOLS_DIR = join(import.meta.dirname!, "..", "tools", "tcc", "tcc");
 const TCC_PATH = join(TOOLS_DIR, "tcc.exe");
 const SESSION_TIMEOUT_MS = 60_000;
 const COMPILER_PATH =

@@ -1,0 +1,16 @@
+# Logs / runtime
+logs
+*.log
+
+# Editors / OS
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.sw?
+
+# tools: keep JWasm.exe (Windows) tracked, ignore locally built Linux binary
+tools/jwasm/jwasm
+tools/jwasm/GccUnixR/
+tools/jwasm/*.o
+tools/jwasm/*.obj
