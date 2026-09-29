@@ -4,6 +4,13 @@ node_modules/
 # Logs / runtime
 logs
 *.log
+*.err
+*.obj
+*.exe
+!tools/jwasm/JWasm.exe
+!tools/jwasm/res2inc.exe
+!tools/tcc/tcc/tcc.exe
+!tools/tcc/tcc/i386-win32-tcc.exe
 
 # Editors / OS
 .DS_Store
