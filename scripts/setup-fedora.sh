@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # dcpu - setup Fedora Linux x86_64 - provee jwasm para server/sandbox/assembly.ts
+# Se invoca desde package.json con: npm run setup:fedora
 # Compila JWasm desde fuentes via GccUnix.mak (tools/jwasm/Readme.txt)
 # No requiere commitear binario; respeta .gitignore
 

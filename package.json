@@ -7,7 +7,7 @@
     "dev": "node --watch main.ts",
     "start": "node main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/",
+    "test": "node --test 'test/**/*.test.ts'",
     "setup:fedora": "bash scripts/setup-fedora.sh"
   },
   "dependencies": {

@@ -1,0 +1,17 @@
+/tmp/asmtest/p8086.asm(1) : Error A2209: Syntax error: IDEAL
+/tmp/asmtest/p8086.asm(2) : Error A2209: Syntax error: P8086
+/tmp/asmtest/p8086.asm(3) : Error A2209: Syntax error: MODEL
+/tmp/asmtest/p8086.asm(4) : Error A2209: Syntax error: STACK
+/tmp/asmtest/p8086.asm(5) : Error A2209: Syntax error: DATASEG
+/tmp/asmtest/p8086.asm(6) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(7) : Error A2209: Syntax error: CODESEG
+/tmp/asmtest/p8086.asm(8) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(9) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(10) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(11) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(12) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(13) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(14) : Error A2082: Must be in segment block
+/tmp/asmtest/p8086.asm(15) : Error A2102: Symbol not defined : start
+/tmp/asmtest/p8086.asm(16) : Error A2102: Symbol not defined : Ideal
+/tmp/asmtest/p8086.asm(16) : Error A2099: END directive required at end of file
