@@ -1,13 +1,16 @@
-import { join } from "@std/path";
+import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { log } from "../lib/logger.ts";
+import { IS_LINUX, makeTempDir, readTextFileIfExists, removeDir, runCommand } from "../lib/proc.ts";
 
-const TOOLS_DIR = join(import.meta.dirname!, "..", "tools", "jwasm");
+const TOOLS_DIR = join(import.meta.dirname, "..", "tools", "jwasm");
 const JWASM_WIN = join(TOOLS_DIR, "JWasm.exe");
 const JWASM_LOCAL = join(TOOLS_DIR, "jwasm");
 
 function resolveAssembler(): string {
-  if (Deno.build.os !== "linux") return JWASM_WIN;
-  const fromEnv = Deno.env.get("JWASM_PATH");
+  if (!IS_LINUX) return JWASM_WIN;
+  const fromEnv = process.env.JWASM_PATH;
   if (fromEnv) return fromEnv;
   const candidates = [
     "/usr/local/bin/jwasm",
@@ -15,12 +18,7 @@ function resolveAssembler(): string {
     JWASM_LOCAL,
   ];
   for (const p of candidates) {
-    try {
-      Deno.statSync(p);
-      return p;
-    } catch {
-      // not found
-    }
+    if (existsSync(p)) return p;
   }
   // fallback to PATH
   return "jwasm";
@@ -29,7 +27,6 @@ function resolveAssembler(): string {
 const ASSEMBLER = resolveAssembler();
 
 type Config = {
-  os: string;
   args: string[];
   source: string;
   obj: string;
@@ -37,56 +34,25 @@ type Config = {
   tmpDir: string;
 };
 
-function getCommandASM(config: Config) {
-  return new Deno.Command(ASSEMBLER, {
-    args: [
-      "-Fo", config.obj,
-      "-I", TOOLS_DIR,
-      config.source,
-    ],
-    cwd: config.tmpDir,
-    stdout: "piped",
-    stderr: "piped",
-  });
+function asmArgs(config: Config): string[] {
+  return ["-Fo", config.obj, "-I", TOOLS_DIR, config.source];
 }
 
-function getExeCommand(config: Config) {
-  return new Deno.Command(ASSEMBLER, {
-    args: [
-      "-mz",
-      "-Fo", config.exe,
-      "-I", TOOLS_DIR,
-      config.source,
-    ],
-    cwd: config.tmpDir,
-    stdout: "piped",
-    stderr: "piped",
-  });
+function exeArgs(config: Config): string[] {
+  return ["-mz", "-Fo", config.exe, "-I", TOOLS_DIR, config.source];
 }
 
 export const ASM_SESSION_TIMEOUT_MS = 10_000;
 
 function resolveDosbox(): string | null {
-  const fromEnv = Deno.env.get("DOSBOX_PATH");
-  if (fromEnv) {
-    try {
-      Deno.statSync(fromEnv);
-      return fromEnv;
-    } catch {
-      // env path not found, continue
-    }
-  }
+  const fromEnv = process.env.DOSBOX_PATH;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
   const candidates = [
     "/usr/bin/dosbox",
     "/usr/bin/dosbox-staging",
   ];
   for (const p of candidates) {
-    try {
-      Deno.statSync(p);
-      return p;
-    } catch {
-      continue;
-    }
+    if (existsSync(p)) return p;
   }
   return null;
 }
@@ -95,22 +61,19 @@ export function isAsmHeadlessAvailable(): boolean {
   // js-dos 100% cliente: el servidor solo compila (jwasm -mz) y retorna exeBase64.
   // Headless DOSBox desactivado por defecto para evitar timeout de 10s.
   // Activar solo con ENABLE_DOSBOX_HEADLESS=1 para debugging.
-  if (Deno.env.get("ENABLE_DOSBOX_HEADLESS") !== "1") return false;
-  const d = resolveDosbox();
-  if (!d) return false;
-  try {
-    Deno.statSync(d);
-    return true;
-  } catch {
-    return false;
-  }
+  if (process.env.ENABLE_DOSBOX_HEADLESS !== "1") return false;
+  return resolveDosbox() !== null;
 }
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
-function parseAsmSource(code: string): string {
+function spawnFailure(message: string) {
+  return { success: false, stdout: "", stderr: "", error: message };
+}
+
+export function parseAsmSource(code: string): string {
   let resultado = code;
   resultado = resultado.replace(/^IDEAL\s*$/gm, "");
   resultado = resultado.replace(/^ideal\s*$/gm, "");
@@ -166,31 +129,25 @@ function formatAsmOutput(s: string): string {
 export async function compileAssembly(code: string) {
   const parsed = parseAsmSource(code);
   log.debug(`compileAssembly: tmpDir created, code.length=${code.length} parsed=${parsed.length}`);
-  const tmpDir = await Deno.makeTempDir({ prefix: "dcpu-asm-" });
+  const tmpDir = await makeTempDir("dcpu-asm-");
   try {
     const srcFile = join(tmpDir, "input.asm");
     const objFile = join(tmpDir, "input.obj");
-    await Deno.writeTextFile(srcFile, parsed);
-    const config = {
-      os: Deno.build.os,
-      args: [],
-      source: srcFile,
-      tmpDir,
-      obj: objFile,
-      exe: "",
-    };
+    await writeFile(srcFile, parsed);
+    const config = { args: [], source: srcFile, tmpDir, obj: objFile, exe: "" };
 
-    const cmd = getCommandASM(config);
     const start = Date.now();
-    const proc = await cmd.output();
+    const proc = await runCommand(ASSEMBLER, asmArgs(config), { cwd: tmpDir });
     const ms = Date.now() - start;
-    const stdout = new TextDecoder().decode(proc.stdout);
-    const stderr = new TextDecoder().decode(proc.stderr);
 
     log.debug(`compileAssembly: exit_code=${proc.code}, duration=${ms}ms`);
 
-    const cleanedStdout = stripAnsi(stdout);
-    const cleanedStderr = stripAnsi(stderr);
+    if (proc.spawnError !== null) {
+      return spawnFailure(proc.spawnError);
+    }
+
+    const cleanedStdout = stripAnsi(proc.stdout);
+    const cleanedStderr = stripAnsi(proc.stderr);
 
     if (!proc.success) {
       const hasErrors = cleanedStderr || cleanedStdout;
@@ -210,50 +167,33 @@ export async function compileAssembly(code: string) {
       stderr: "",
       error: null,
     };
-  } catch (err) {
-    return {
-      success: false,
-      stdout: "",
-      stderr: "",
-      error: err instanceof Error ? err.message : "Unknown error running JWASM",
-    };
   } finally {
-    try {
-      await Deno.remove(tmpDir, { recursive: true });
-    } catch {
-      // ignore cleanup errors
-    }
+    await removeDir(tmpDir).catch(() => {});
   }
 }
 
 export async function compileAssemblyRun(code: string) {
   const parsed = parseAsmSource(code);
   log.debug(`compileAssemblyRun: tmpDir created, code.length=${code.length} parsed=${parsed.length}`);
-  const tmpDir = await Deno.makeTempDir({ prefix: "dcpu-asm-run-" });
+  const tmpDir = await makeTempDir("dcpu-asm-run-");
   try {
     const srcFile = join(tmpDir, "input.asm");
     const exeFile = join(tmpDir, "input.exe");
-    await Deno.writeTextFile(srcFile, parsed);
-    const config = {
-      os: Deno.build.os,
-      args: [],
-      source: srcFile,
-      tmpDir,
-      obj: "",
-      exe: exeFile,
-    };
+    await writeFile(srcFile, parsed);
+    const config = { args: [], source: srcFile, tmpDir, obj: "", exe: exeFile };
 
-    const cmd = getExeCommand(config);
     const start = Date.now();
-    const proc = await cmd.output();
+    const proc = await runCommand(ASSEMBLER, exeArgs(config), { cwd: tmpDir });
     const ms = Date.now() - start;
-    const stdout = new TextDecoder().decode(proc.stdout);
-    const stderr = new TextDecoder().decode(proc.stderr);
 
     log.debug(`compileAssemblyRun: exit_code=${proc.code}, duration=${ms}ms`);
 
-    const cleanedStdout = stripAnsi(stdout);
-    const cleanedStderr = stripAnsi(stderr);
+    if (proc.spawnError !== null) {
+      return { success: false, exeBase64: null, error: proc.spawnError };
+    }
+
+    const cleanedStdout = stripAnsi(proc.stdout);
+    const cleanedStderr = stripAnsi(proc.stderr);
 
     if (!proc.success) {
       const hasErrors = cleanedStderr || cleanedStdout;
@@ -266,26 +206,15 @@ export async function compileAssemblyRun(code: string) {
       };
     }
 
-    const exeBytes = await Deno.readFile(exeFile);
-    const exeBase64 = btoa(String.fromCharCode(...new Uint8Array(exeBytes)));
+    const exeBase64 = (await readFile(exeFile)).toString("base64");
 
     return {
       success: true,
       exeBase64,
       error: null,
     };
-  } catch (err) {
-    return {
-      success: false,
-      exeBase64: null,
-      error: err instanceof Error ? err.message : "Unknown error running JWASM",
-    };
   } finally {
-    try {
-      await Deno.remove(tmpDir, { recursive: true });
-    } catch {
-      // ignore cleanup errors
-    }
+    await removeDir(tmpDir).catch(() => {});
   }
 }
 
@@ -304,26 +233,26 @@ export interface AsmRunResult {
  */
 export async function compileAndRunAsmCaptured(code: string): Promise<AsmRunResult> {
   const parsed = parseAsmSource(code);
-  const tmpDir = await Deno.makeTempDir({ prefix: "dcpu-asm-cap-" });
+  const tmpDir = await makeTempDir("dcpu-asm-cap-");
   try {
     const srcFile = join(tmpDir, "input.asm");
     const exeFile = join(tmpDir, "program.exe");
-    await Deno.writeTextFile(srcFile, parsed);
-    const config = {
-      os: Deno.build.os,
-      args: [],
-      source: srcFile,
-      tmpDir,
-      obj: "",
-      exe: exeFile,
-    };
-    const cmd = getExeCommand(config);
-    const proc = await cmd.output();
-    const stdout = new TextDecoder().decode(proc.stdout);
-    const stderr = new TextDecoder().decode(proc.stderr);
+    await writeFile(srcFile, parsed);
+    const config = { args: [], source: srcFile, tmpDir, obj: "", exe: exeFile };
+
+    const proc = await runCommand(ASSEMBLER, exeArgs(config), { cwd: tmpDir });
+    if (proc.spawnError !== null) {
+      return {
+        success: false,
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        error: `DOSBox execution failed: ${proc.spawnError}`,
+      };
+    }
     if (!proc.success) {
-      const cleanedStdout = stripAnsi(stdout);
-      const cleanedStderr = stripAnsi(stderr);
+      const cleanedStdout = stripAnsi(proc.stdout);
+      const cleanedStderr = stripAnsi(proc.stderr);
       const hasErrors = cleanedStderr || cleanedStdout;
       return {
         success: false,
@@ -348,11 +277,7 @@ export async function compileAndRunAsmCaptured(code: string): Promise<AsmRunResu
     }
     return await runDosboxCapture(dosbox, exeFile, tmpDir);
   } finally {
-    try {
-      await Deno.remove(tmpDir, { recursive: true });
-    } catch {
-      // ignore
-    }
+    await removeDir(tmpDir).catch(() => {});
   }
 }
 
@@ -363,90 +288,58 @@ async function runDosboxCapture(dosboxBin: string, exeFile: string, tmpDir: stri
   const dosboxConfContent =
     `[sdl]\noutput=texture\n[dosbox]\nmemsize=16\n[autoexec]\n@echo off\nmount z ${tmpDir}\nz:\nprogram.exe > out.txt 2> err.txt\n exit\n`;
   const confFile = join(tmpDir, "dosbox.conf");
-  await Deno.writeTextFile(confFile, dosboxConfContent);
+  await writeFile(confFile, dosboxConfContent);
 
   log.debug(`runDosboxCapture: bin=${dosboxBin}, tmpDir=${tmpDir}`);
 
-  const env: Record<string, string> = {};
-  // deno-lint-ignore no-explicit-any
-  const origEnv = (Deno.env.toObject() as any) as Record<string, string>;
-  for (const [k, v] of Object.entries(origEnv)) env[k] = v;
   // compatibilidad: offscreen evita ABORT OpenGL con dummy, dummy audio evita requerir ALSA/pulse
-  env["SDL_VIDEODRIVER"] = "offscreen";
-  // env["SDL_AUDIODRIVER"] = "dummy";
-  // opcional: forzar render software para asegurar compatibilidad sin GL
-  env["SDL_RENDER_DRIVER"] = "software";
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    SDL_VIDEODRIVER: "offscreen",
+    // SDL_AUDIODRIVER: "dummy",
+    // opcional: forzar render software para asegurar compatibilidad sin GL
+    SDL_RENDER_DRIVER: "software",
+  };
 
-  let stdout = "";
-  let stderr = "";
-  let exitCode: number | null = null;
-  let timedOut = false;
+  const timeoutMs = ASM_SESSION_TIMEOUT_MS;
+  const result = await runCommand(dosboxBin, ["-conf", confFile, "-noconsole", "-nosound"], {
+    cwd: tmpDir,
+    env,
+    timeoutMs,
+  });
 
-  const bin = dosboxBin;
-  const args = ["-conf", confFile, "-noconsole", "-nosound"];
+  let stdout = result.stdout;
+  let stderr = result.stderr;
+  const exitCode = result.timedOut ? null : result.code;
 
-  try {
-    const cmd = new Deno.Command(bin, {
-      args,
-      cwd: tmpDir,
-      stdout: "piped",
-      stderr: "piped",
-      env,
-    });
-    // Race with timeout
-    const proc = cmd.spawn();
-    const timeoutMs = ASM_SESSION_TIMEOUT_MS;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        timedOut = true;
-        try { proc.kill("SIGTERM"); } catch { /* ignore */ }
-        reject(new Error(`DOSBox timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    });
-
-    const outputPromise = proc.output();
-    let result: Deno.CommandOutput;
-    try {
-      result = await Promise.race([outputPromise, timeoutPromise]) as Deno.CommandOutput;
-    } finally {
-      if (timeoutId !== null) clearTimeout(timeoutId);
-    }
-
-    stdout = new TextDecoder().decode(result.stdout);
-    stderr = new TextDecoder().decode(result.stderr);
-    exitCode = result.code;
-
-    // Prefer captured out.txt if exists
-    try {
-      const captured = await Deno.readTextFile(outFile);
-      if (captured.trim()) {
-        stdout = captured;
-      }
-    } catch {
-      // no out file, keep dosbox stdout
-    }
-    try {
-      const errCaptured = await Deno.readTextFile(join(tmpDir, "err.txt"));
-      if (errCaptured.trim()) stderr += (stderr ? "\n" : "") + errCaptured;
-    } catch { /* ignore */ }
-
-    const formattedStdout = formatAsmOutput(stdout);
-    const formattedStderr = formatAsmOutput(stderr);
-
-    if (timedOut) {
-      return { success: false, stdout: formattedStdout, stderr: formattedStderr, exitCode, error: "Program timed out" };
-    }
-
-    return { success: true, stdout: formattedStdout, stderr: formattedStderr, exitCode, error: null };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // If binary not found or failed to spawn, surface friendly error for fallback
-    if (msg.includes("Timed out")) {
-      return { success: false, stdout: formatAsmOutput(stdout), stderr: formatAsmOutput(stderr), exitCode, error: msg };
-    }
-    return { success: false, stdout: formatAsmOutput(stdout), stderr: formatAsmOutput(stderr), exitCode, error: `DOSBox execution failed: ${msg}` };
+  // Prefer captured out.txt if exists
+  const captured = await readTextFileIfExists(outFile);
+  if (captured !== null && captured.trim()) {
+    stdout = captured;
   }
+  const errCaptured = await readTextFileIfExists(join(tmpDir, "err.txt"));
+  if (errCaptured !== null && errCaptured.trim()) {
+    stderr += (stderr ? "\n" : "") + errCaptured;
+  }
+
+  const formattedStdout = formatAsmOutput(stdout);
+  const formattedStderr = formatAsmOutput(stderr);
+
+  if (result.timedOut) {
+    return { success: false, stdout: formattedStdout, stderr: formattedStderr, exitCode, error: "Program timed out" };
+  }
+
+  if (result.spawnError !== null) {
+    return {
+      success: false,
+      stdout: formattedStdout,
+      stderr: formattedStderr,
+      exitCode,
+      error: `DOSBox execution failed: ${result.spawnError}`,
+    };
+  }
+
+  return { success: true, stdout: formattedStdout, stderr: formattedStderr, exitCode, error: null };
 }
 
 export { formatAsmOutput, resolveDosbox };
