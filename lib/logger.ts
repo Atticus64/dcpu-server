@@ -1,4 +1,4 @@
-const LOG_LEVEL = Deno.env.get("LOG_LEVEL") || "";
+const LOG_LEVEL = process.env.LOG_LEVEL || "";
 const ENABLED = LOG_LEVEL.toLowerCase() === "debug";
 
 function timestamp(): string {
