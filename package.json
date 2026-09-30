@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --watch main.ts",
     "start": "node main.ts",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --test 'test/**/*.test.ts'",
     "setup:fedora": "bash scripts/setup-fedora.sh"

@@ -20,6 +20,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY main.ts ./
+COPY app.ts ./
 COPY lib/ ./lib/
 COPY routes/ ./routes/
 COPY sandbox/ ./sandbox/
