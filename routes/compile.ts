@@ -1,18 +1,15 @@
-import { Router } from "@oak/oak";
+import { Hono } from "hono";
 import { compileAssembly, compileAssemblyRun } from "../sandbox/assembly.ts";
 import { compileC } from "../sandbox/c.ts";
 import { log } from "../lib/logger.ts";
 
-const compileRouter = new Router();
+const compileRouter = new Hono();
 
-compileRouter.post("/", async (ctx) => {
-  const body = ctx.request.body;
-  const { code, language } = await body.json() as { code: string; language: string };
+compileRouter.post("/", async (c) => {
+  const { code, language } = await c.req.json<{ code: string; language: string }>();
 
   if (!code || !language) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Missing 'code' or 'language'" };
-    return;
+    return c.json({ error: "Missing 'code' or 'language'" }, 400);
   }
 
   log.debug(`Compile request: language=${language}, code.length=${code.length}`);
@@ -25,9 +22,7 @@ compileRouter.post("/", async (ctx) => {
     } else if (language === "c") {
       result = await compileC(code);
     } else {
-      ctx.response.status = 400;
-      ctx.response.body = { error: `Unsupported language: ${language}` };
-      return;
+      return c.json({ error: `Unsupported language: ${language}` }, 400);
     }
 
     const ms = Date.now() - start;
@@ -36,25 +31,24 @@ compileRouter.post("/", async (ctx) => {
       log.warn(`Compilation failed: language=${language}`, (result as { error: string }).error);
     }
 
-    ctx.response.body = result;
+    return c.json(result);
   } catch (err) {
     log.error(`Compile error: language=${language}`, err);
-    ctx.response.status = 500;
-    ctx.response.body = {
-      success: false,
-      error: err instanceof Error ? err.message : "Internal server error",
-    };
+    return c.json(
+      {
+        success: false,
+        error: err instanceof Error ? err.message : "Internal server error",
+      },
+      500,
+    );
   }
 });
 
-compileRouter.post("/run", async (ctx) => {
-  const body = ctx.request.body;
-  const { code, language } = await body.json() as { code: string; language: string };
+compileRouter.post("/run", async (c) => {
+  const { code, language } = await c.req.json<{ code: string; language: string }>();
 
   if (!code || !language) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Missing 'code' or 'language'" };
-    return;
+    return c.json({ error: "Missing 'code' or 'language'" }, 400);
   }
 
   log.debug(`Compile+run request: language=${language}, code.length=${code.length}`);
@@ -65,9 +59,7 @@ compileRouter.post("/run", async (ctx) => {
     if (language === "assembly") {
       result = await compileAssemblyRun(code);
     } else {
-      ctx.response.status = 400;
-      ctx.response.body = { error: `Unsupported language: ${language}` };
-      return;
+      return c.json({ error: `Unsupported language: ${language}` }, 400);
     }
 
     const ms = Date.now() - start;
@@ -76,15 +68,17 @@ compileRouter.post("/run", async (ctx) => {
       log.warn(`Compile+run failed: language=${language}`, (result as { error: string }).error);
     }
 
-    ctx.response.body = result;
+    return c.json(result);
   } catch (err) {
     log.error(`Compile+run error: language=${language}`, err);
-    ctx.response.status = 500;
-    ctx.response.body = {
-      success: false,
-      exeBase64: null,
-      error: err instanceof Error ? err.message : "Internal server error",
-    };
+    return c.json(
+      {
+        success: false,
+        exeBase64: null,
+        error: err instanceof Error ? err.message : "Internal server error",
+      },
+      500,
+    );
   }
 });
 

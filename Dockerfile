@@ -1,15 +1,25 @@
 # syntax=docker/dockerfile:1
-# Runtime: Deno + dosbox-staging + JWasm (headless offscreen, no xorg)
+# Runtime: Node.js + dosbox-staging + JWasm (headless offscreen, no xorg)
+ARG NODE_VERSION=v24.21.0
+ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+
 FROM fedora:41
-RUN dnf install -y dosbox-staging make gcc git unzip curl \
+ARG NODE_VERSION
+ARG NODE_SHA256
+RUN dnf install -y dosbox-staging make gcc git unzip curl xz \
     && dnf clean all \
-    && curl -fsSL https://deno.land/install.sh | sh \
-    && ln -s /root/.deno/bin/deno /usr/local/bin/deno \
-    && deno --version \
+    && curl -fsSLO "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" \
+    && echo "${NODE_SHA256}  node-${NODE_VERSION}-linux-x64.tar.xz" | sha256sum -c - \
+    && tar -xJf "node-${NODE_VERSION}-linux-x64.tar.xz" -C /usr/local --strip-components=1 \
+    && rm "node-${NODE_VERSION}-linux-x64.tar.xz" \
+    && node --version \
+    && npm --version \
     && dosbox-staging --version || dosbox --version
 
 WORKDIR /app
-COPY deno.json deno.lock main.ts ./
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY main.ts ./
 COPY lib/ ./lib/
 COPY routes/ ./routes/
 COPY sandbox/ ./sandbox/
@@ -29,4 +39,4 @@ EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:3001/api/health || exit 1
 
-CMD ["deno","run","--allow-net","--allow-read","--allow-write","--allow-run","--allow-env","main.ts"]
+CMD ["node","main.ts"]

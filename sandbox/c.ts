@@ -1,36 +1,22 @@
-import { join } from "@std/path";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { log } from "../lib/logger.ts";
+import { IS_LINUX, NATIVE_EXE_NAME, makeTempDir, removeDir, runCommand } from "../lib/proc.ts";
 
-const TOOLS_DIR = join(import.meta.dirname!, "..", "tools", "tcc", "tcc");
+const TOOLS_DIR = join(import.meta.dirname, "..", "tools", "tcc", "tcc");
 const TCC_PATH = join(TOOLS_DIR, "tcc.exe");
 const SESSION_TIMEOUT_MS = 60_000;
-const COMPILER_PATH =
-  Deno.build.os === "linux"
-    ? "gcc" : TCC_PATH;
+const COMPILER_PATH = IS_LINUX ? "gcc" : TCC_PATH;
 
-function getCommand(os: string, srcFile: string, tmpDir: string, exeFile?: string) {
-  if (os === "linux") {
-    // compile only: gcc -o /dev/null (validation) or gcc -o exeFile
-    // caller compileC validates via -o /dev/null implicit? we compile to exeFile or check syntax
-    const out = exeFile ?? join(tmpDir, "a.out");
-    return new Deno.Command(COMPILER_PATH, {
-      args: ["-o", out, srcFile],
-      cwd: tmpDir,
-      stdout: "piped",
-      stderr: "piped",
-    });
-  }
-  return new Deno.Command(COMPILER_PATH, {
-    args: [
-      "-I", join(TOOLS_DIR, "include"),
-      "-L", join(TOOLS_DIR, "lib"),
-      "-run",
-      srcFile,
-    ],
-    cwd: tmpDir,
-    stdout: "piped",
-    stderr: "piped",
-  });
+function compilerArgs(srcFile: string, exeFile: string): string[] {
+  if (IS_LINUX) return ["-o", exeFile, srcFile];
+  return [
+    "-I", join(TOOLS_DIR, "include"),
+    "-L", join(TOOLS_DIR, "lib"),
+    "-run",
+    srcFile,
+  ];
 }
 
 export function prepareSource(code: string): { src: string; hasMain: boolean } {
@@ -46,98 +32,79 @@ export function prepareSource(code: string): { src: string; hasMain: boolean } {
 
 export async function compileC(code: string) {
   log.debug(`compileC: tmpDir created, code.length=${code.length}`);
-  const tmpDir = await Deno.makeTempDir({ prefix: "dcpu-c-" });
+  const tmpDir = await makeTempDir("dcpu-c-");
   try {
     const srcFile = join(tmpDir, "input.c");
     const { src, hasMain } = prepareSource(code);
-    await Deno.writeTextFile(srcFile, src);
-
+    await writeFile(srcFile, src);
 
     // compile to temp exe for validation, then remove
-    const tmpExe = join(tmpDir, "a.out");
-    const cmd = getCommand(Deno.build.os, srcFile, tmpDir, tmpExe);
+    const tmpExe = join(tmpDir, NATIVE_EXE_NAME);
     const start = Date.now();
-    const proc = await cmd.output();
+    const proc = await runCommand(COMPILER_PATH, compilerArgs(srcFile, tmpExe), { cwd: tmpDir });
     const ms = Date.now() - start;
-    const stdout = new TextDecoder().decode(proc.stdout);
-    const stderr = new TextDecoder().decode(proc.stderr);
 
     log.debug(`compileC: exit_code=${proc.code}, hasMain=${hasMain}, duration=${ms}ms`);
+
+    if (proc.spawnError !== null) {
+      return { success: false, stdout: "", stderr: "", error: proc.spawnError };
+    }
 
     if (!proc.success) {
       return {
         success: false,
-        stdout,
-        stderr,
-        error: stderr || "Compilation failed",
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+        error: proc.stderr || "Compilation failed",
       };
     }
 
     return {
       success: true,
-      stdout: stdout || "Compilation successful",
+      stdout: proc.stdout || "Compilation successful",
       stderr: "",
       error: null,
     };
-  } catch (err) {
-    return {
-      success: false,
-      stdout: "",
-      stderr: "",
-      error: err instanceof Error ? err.message : "Unknown error running TCC",
-    };
   } finally {
-    try {
-      await Deno.remove(tmpDir, { recursive: true });
-    } catch {
-      // ignore cleanup errors
-    }
+    await removeDir(tmpDir).catch(() => {});
   }
 }
 
 export interface CSession {
-  proc: Deno.ChildProcess;
+  proc: ChildProcessWithoutNullStreams;
   tmpDir: string;
 }
 
 export async function compileCToExe(code: string): Promise<CSession> {
   log.debug(`compileCToExe: tmpDir created, code.length=${code.length}`);
-  const tmpDir = await Deno.makeTempDir({ prefix: "dcpu-c-session-" });
+  const tmpDir = await makeTempDir("dcpu-c-session-");
   const srcFile = join(tmpDir, "input.c");
-  const exeName = Deno.build.os === "linux" ? "a.out" : "program.exe";
-  const exeFile = join(tmpDir, exeName);
+  const exeFile = join(tmpDir, NATIVE_EXE_NAME);
 
   const { src } = prepareSource(code);
-  await Deno.writeTextFile(srcFile, src);
-  const cmd = getCommand(Deno.build.os, srcFile, tmpDir, exeFile);
+  await writeFile(srcFile, src);
 
-  const proc = await cmd.output();
-  const stdout = new TextDecoder().decode(proc.stdout);
-  const stderr = new TextDecoder().decode(proc.stderr);
+  const start = Date.now();
+  const proc = await runCommand(COMPILER_PATH, compilerArgs(srcFile, exeFile), { cwd: tmpDir });
 
-  log.debug(`compileCToExe: exit_code=${proc.code}, duration=${Date.now()}ms`);
+  log.debug(`compileCToExe: exit_code=${proc.code}, duration=${Date.now() - start}ms`);
 
-  if (!proc.success) {
-    await Deno.remove(tmpDir, { recursive: true }).catch(() => {});
-    const message = stderr || stdout || `Compilation failed with exit code ${proc.code}`;
+  if (proc.spawnError !== null || !proc.success) {
+    await removeDir(tmpDir).catch(() => {});
+    const message = proc.stderr || proc.stdout || proc.spawnError ||
+      `Compilation failed with exit code ${proc.code}`;
     throw new Error(message.trim());
   }
 
-  return { proc: new Deno.Command(exeFile, {
-    cwd: tmpDir,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn(), tmpDir };
+  return {
+    proc: spawn(exeFile, { cwd: tmpDir, stdio: "pipe" }),
+    tmpDir,
+  };
 }
 
 export function cleanupCSession(session: CSession): Promise<void> {
-  try {
-    session.proc.kill();
-  } catch {
-    // process may have already exited
-  }
-  return Deno.remove(session.tmpDir, { recursive: true }).catch(() => {});
+  session.proc.kill();
+  return removeDir(session.tmpDir).catch(() => {});
 }
 
 export { SESSION_TIMEOUT_MS };

@@ -1,0 +1,26 @@
+{
+  "name": "dcpu-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch main.ts",
+    "start": "node main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/**/*.test.ts'",
+    "setup:fedora": "bash scripts/setup-fedora.sh"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.2",
+    "hono": "^4.13.10",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/ws": "^8.18.1",
+    "typescript": "~6.0.0"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.12.0"
+  }
+}
